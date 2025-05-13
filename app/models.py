@@ -1,10 +1,24 @@
-from .extensions import db
+from datetime import datetime
+from app import db
 
 class User(db.Model):
     user_id = db.Column(db.Integer, primary_key=True)
-    username = db.Column(db.String(100), unique=True, nullable=False)
-    password = db.Column(db.String(255), nullable=False)
+    username = db.Column(db.String(100), unique=True, nullable=True)
+    password = db.Column(db.String(255), nullable=True)
     role = db.Column(db.String(50), nullable=False, default='customer')
+    yandex_id = db.Column(db.String(100), unique=True, nullable=True)
+    email = db.Column(db.String(120), unique=True, nullable=False)
+    first_name = db.Column(db.String(100))
+    last_name = db.Column(db.String(100))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def __repr__(self):
+        return f'<User {self.email}>'
+
+    @property
+    def is_yandex_user(self):
+        return self.yandex_id is not None
 
 class Order(db.Model):
     order_id = db.Column(db.Integer, primary_key=True)
