@@ -3,11 +3,12 @@ import requests
 from datetime import datetime, timedelta
 from app import db
 from app.models import User
+import jwt
 
 class YandexAuthService:
     def __init__(self) -> None:
-        self.client_id: str = ""
-        self.client_secret: str = ""
+        self.client_id: str = "96d622e3132846ed89e685c5cdd109ef"
+        self.client_secret: str = "6b2af9713e684c9094e7ff32ca8e8708"
         self.token_url: str = "https://oauth.yandex.ru/token"
         self.userinfo_url: str = "https://login.yandex.ru/info"
         self.jwt_secret: str = "your-secret-key"
