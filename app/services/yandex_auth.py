@@ -1,6 +1,5 @@
 from typing import Dict, Any, Optional
 import requests
-from jose import jwt
 from datetime import datetime, timedelta
 from app import db
 from app.models import User

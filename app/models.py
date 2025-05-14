@@ -39,3 +39,14 @@ class OrderProducts(db.Model):
     order_id = db.Column(db.Integer, db.ForeignKey('order.order_id'), primary_key=True)
     product_id = db.Column(db.Integer, db.ForeignKey('product.product_id'), primary_key=True)
     quantity = db.Column(db.Integer, default=1)
+
+class Payment(db.Model):
+    payment_id = db.Column(db.String(100), primary_key=True)  # ID платежа в YooMoney
+    order_id = db.Column(db.Integer, db.ForeignKey('order.order_id'))
+    amount = db.Column(db.Numeric(10, 2))
+    status = db.Column(db.String(50))  # pending, succeeded, canceled
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def __repr__(self):
+        return f'<Payment {self.payment_id}>'
