@@ -2,18 +2,25 @@ from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from ..models import User, Product, Order, OrderProducts
 from ..extensions import db
+from functools import wraps
 
 admin_bp = Blueprint('admin', __name__)
 
+def admin_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        current_user_id = get_jwt_identity()
+        user = User.query.get(current_user_id)
+        
+        if not user or user.role != 'admin':
+            return jsonify({"msg": "Admin access required"}), 403
+        return f(*args, **kwargs)
+    return decorated_function
+
 @admin_bp.route('/admin', methods=['GET'])
 @jwt_required()
+@admin_required
 def admin_panel():
-    current_user_id = get_jwt_identity()
-    user = User.query.get(current_user_id)
-
-    if user.role != 'admin':
-        return jsonify({"msg": "Access denied: Admins only"}), 403
-
     users = User.query.all()
     products = Product.query.all()
 
@@ -22,91 +29,108 @@ def admin_panel():
         "products": [{"product_id": p.product_id, "name": p.name, "price": str(p.price)} for p in products]
     })
 
-@admin_bp.route('/admin/add_product', methods=['POST'])
+@admin_bp.route('/products', methods=['POST'])
 @jwt_required()
-def add_product():
-    current_user_id = get_jwt_identity()
-    user = User.query.get(current_user_id)
-
-    if user.role != 'admin':
-        return jsonify({"msg": "Access denied: Admins only"}), 403
-
+@admin_required
+def create_product():
     data = request.get_json()
-
-    name = data.get('name')
-    price = data.get('price')
-    category_id = data.get('category_id')
-
-    if not name or not price or not category_id:
-        return jsonify({"msg": "Missing product details"}), 400
-
-    new_product = Product(name=name, price=price, category_id=category_id)
-    db.session.add(new_product)
-    db.session.commit()
-
-    return jsonify({"msg": "Product added successfully"}), 201
-
-@admin_bp.route('/admin/edit_product/<int:product_id>', methods=['POST'])
-@jwt_required()
-def edit_product(product_id):
     current_user_id = get_jwt_identity()
-    user = User.query.get(current_user_id)
+    
+    required_fields = ['name', 'price']
+    if not all(field in data for field in required_fields):
+        return jsonify({"msg": "Missing required fields"}), 400
 
-    if user.role != 'admin':
-        return jsonify({"msg": "Access denied: Admins only"}), 403
+    try:
+        new_product = Product(
+            name=data['name'],
+            description=data.get('description'),
+            price=data['price'],
+            category_id=data.get('category_id'),
+            image_url=data.get('image_url'),
+            stock_quantity=data.get('stock_quantity', 0),
+            created_by=current_user_id
+        )
+        
+        db.session.add(new_product)
+        db.session.commit()
+        
+        return jsonify({
+            "msg": "Product created successfully",
+            "product": new_product.to_dict()
+        }), 201
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"msg": str(e)}), 400
 
-    data = request.get_json()
-
-    product = Product.query.get(product_id)
-    if not product:
-        return jsonify({"msg": "Product not found"}), 404
-
-    name = data.get('name')
-    price = data.get('price')
-    category_id = data.get('category_id')
-
-    if name:
-        product.name = name
-    if price:
-        product.price = price
-    if category_id:
-        product.category_id = category_id
-
-    db.session.commit()
-
-    return jsonify({"msg": "Product updated successfully"}), 200
-
-@admin_bp.route('/admin/delete_product/<int:product_id>', methods=['DELETE'])
+@admin_bp.route('/products/<int:product_id>', methods=['PUT'])
 @jwt_required()
+@admin_required
+def update_product(product_id):
+    data = request.get_json()
+    product = Product.query.get_or_404(product_id)
+    
+    try:
+        if 'name' in data:
+            product.name = data['name']
+        if 'description' in data:
+            product.description = data['description']
+        if 'price' in data:
+            product.price = data['price']
+        if 'category_id' in data:
+            product.category_id = data['category_id']
+        if 'image_url' in data:
+            product.image_url = data['image_url']
+        if 'stock_quantity' in data:
+            product.stock_quantity = data['stock_quantity']
+        if 'is_active' in data:
+            product.is_active = data['is_active']
+            
+        db.session.commit()
+        
+        return jsonify({
+            "msg": "Product updated successfully",
+            "product": product.to_dict()
+        })
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"msg": str(e)}), 400
+
+@admin_bp.route('/products/<int:product_id>', methods=['DELETE'])
+@jwt_required()
+@admin_required
 def delete_product(product_id):
-    current_user_id = get_jwt_identity()
-    user = User.query.get(current_user_id)
+    product = Product.query.get_or_404(product_id)
+    
+    try:
+        db.session.delete(product)
+        db.session.commit()
+        return jsonify({"msg": "Product deleted successfully"})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"msg": str(e)}), 400
 
-    if user.role != 'admin':
-        return jsonify({"msg": "Access denied: Admins only"}), 403
+@admin_bp.route('/products', methods=['GET'])
+@jwt_required()
+@admin_required
+def get_products():
+    products = Product.query.all()
+    return jsonify({
+        "products": [product.to_dict() for product in products]
+    })
 
-    product = Product.query.get(product_id)
-    if not product:
-        return jsonify({"msg": "Product not found"}), 404
-
-    order_products = OrderProducts.query.filter_by(product_id=product_id).all()
-    for order_product in order_products:
-        db.session.delete(order_product)
-
-    db.session.delete(product)
-    db.session.commit()
-
-    return jsonify({"msg": "Product deleted successfully"}), 200
+@admin_bp.route('/products/<int:product_id>', methods=['GET'])
+@jwt_required()
+@admin_required
+def get_product(product_id):
+    product = Product.query.get_or_404(product_id)
+    return jsonify(product.to_dict())
 
 @admin_bp.route('/admin/orders', methods=['GET'])
 @jwt_required()
+@admin_required
 def get_orders():
-    current_user_id = get_jwt_identity()
-    user = User.query.get(current_user_id)
-
-    if user.role != 'admin':
-        return jsonify({"msg": "Access denied: Admins only"}), 403
-
     orders = Order.query.all()
     orders_data = []
     for order in orders:
@@ -140,13 +164,8 @@ def get_orders():
 
 @admin_bp.route('/admin/change_order_status/<int:order_id>', methods=['POST'])
 @jwt_required()
+@admin_required
 def change_order_status(order_id):
-    current_user_id = get_jwt_identity()
-    user = User.query.get(current_user_id)
-
-    if user.role != 'admin':
-        return jsonify({"msg": "Access denied: Admins only"}), 403
-
     data = request.get_json()
 
     order = Order.query.get(order_id)

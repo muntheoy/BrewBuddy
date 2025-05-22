@@ -95,3 +95,18 @@ class PaymentService:
             if "Payment not found" in str(e):
                 return None
             raise e 
+
+    def cancel_payment(self, payment_id: str) -> dict:
+        """
+        Отменяет платеж в YooMoney
+        """
+        if not self.api_key:
+            raise RuntimeError("PaymentService not initialized. Call init_app first.")
+        try:
+            payment = YooPayment.cancel(payment_id)
+            return {
+                'id': payment.id,
+                'status': payment.status
+            }
+        except Exception as e:
+            return {'error': str(e)} 

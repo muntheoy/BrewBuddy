@@ -1,9 +1,9 @@
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Tuple
 import requests
 from datetime import datetime, timedelta
 from app import db
 from app.models import User
-import jwt
+from flask_jwt_extended import create_access_token, get_jwt_identity
 
 class YandexAuthService:
     def __init__(self) -> None:
@@ -11,53 +11,91 @@ class YandexAuthService:
         self.client_secret: str = "6b2af9713e684c9094e7ff32ca8e8708"
         self.token_url: str = "https://oauth.yandex.ru/token"
         self.userinfo_url: str = "https://login.yandex.ru/info"
-        self.jwt_secret: str = "your-secret-key"
+        self.redirect_uri: str = "http://localhost:5000/auth/yandex/callback"
 
     def get_access_token(self, code: str) -> Dict[str, Any]:
-        data: Dict[str, str] = {
-            "grant_type": "authorization_code",
-            "code": code,
-            "client_id": self.client_id,
-            "client_secret": self.client_secret
+        data = {
+            'grant_type': 'authorization_code',
+            'code': code,
+            'client_id': self.client_id,
+            'client_secret': self.client_secret
         }
-        response = requests.post(self.token_url, data=data)
-        return response.json()
+        try:
+            response = requests.post(self.token_url, data=data)
+            return response.json()
+        except Exception as e:
+            return {'error': str(e)}
 
     def get_user_info(self, access_token: str) -> Dict[str, Any]:
-        headers: Dict[str, str] = {"Authorization": f"OAuth {access_token}"}
-        response = requests.get(self.userinfo_url, headers=headers)
-        return response.json()
+        headers = {
+            'Authorization': f'OAuth {access_token}'
+        }
+        try:
+            response = requests.get(self.userinfo_url, headers=headers)
+            return response.json()
+        except Exception as e:
+            return {'error': str(e)}
 
-    def create_or_update_user(self, yandex_user_info: Dict[str, Any]) -> User:
-        user: Optional[User] = User.query.filter_by(yandex_id=yandex_user_info["id"]).first()
+    def create_or_update_user(self, user_info: Dict[str, Any], current_user_id: Optional[int] = None) -> Tuple[User, bool]:
+        """
+        Создает нового пользователя или обновляет существующего
+        :param user_info: Информация о пользователе от Яндекс
+        :param current_user_id: ID текущего пользователя (если есть)
+        :return: Tuple[User, bool] - (пользователь, является ли новым)
+        """
+        yandex_id = user_info.get('id')
+        email = user_info.get('default_email')
         
-        if not user:
-            user = User.query.filter_by(email=yandex_user_info["default_email"]).first()
+        # Если есть текущий пользователь, привязываем к нему Яндекс
+        if current_user_id:
+            user = User.query.get(current_user_id)
             if user:
-                user.yandex_id = yandex_user_info["id"]
-            else:
-                user = User(
-                    yandex_id=yandex_user_info["id"],
-                    email=yandex_user_info["default_email"],
-                    first_name=yandex_user_info.get("first_name", ""),
-                    last_name=yandex_user_info.get("last_name", ""),
-                    username=yandex_user_info.get("default_email", "").split("@")[0]
-                )
-                db.session.add(user)
-        else:
-            user.email = yandex_user_info["default_email"]
-            user.first_name = yandex_user_info.get("first_name", "")
-            user.last_name = yandex_user_info.get("last_name", "")
+                user.yandex_id = yandex_id
+                db.session.commit()
+                return user, False
         
+        # Ищем пользователя по Яндекс ID
+        user = User.query.filter_by(yandex_id=yandex_id).first()
+        if user:
+            return user, False
+            
+        # Ищем пользователя по email
+        user = User.query.filter_by(email=email).first()
+        if user:
+            user.yandex_id = yandex_id
+            db.session.commit()
+            return user, False
+            
+        # Создаем нового пользователя
+        new_user = User(
+            yandex_id=yandex_id,
+            email=email,
+            first_name=user_info.get('first_name'),
+            last_name=user_info.get('last_name'),
+            username=email.split('@')[0],  # Используем часть email до @ как username
+            role='customer'
+        )
+        db.session.add(new_user)
         db.session.commit()
-        return user
+        return new_user, True
 
     def create_jwt_token(self, user: User) -> str:
-        payload: Dict[str, Any] = {
-            "user_id": user.user_id,
-            "email": user.email,
-            "role": user.role,
-            "is_yandex_user": user.is_yandex_user,
-            "exp": datetime.utcnow() + timedelta(days=1)
-        }
-        return jwt.encode(payload, self.jwt_secret, algorithm="HS256") 
+        access_token = create_access_token(
+            identity=str(user.user_id),
+            expires_delta=timedelta(days=7)
+        )
+        user.update_tokens(access_token, None)  # Для Яндекс авторизации refresh token не нужен
+        return access_token
+
+    def validate_token(self, user: User) -> bool:
+        return user.is_token_valid
+
+    def refresh_token_if_needed(self, user: User) -> Optional[str]:
+        if not user.is_token_valid:
+            new_token = create_access_token(
+                identity=str(user.user_id),
+                expires_delta=timedelta(days=7)
+            )
+            user.update_tokens(new_token, None)
+            return new_token
+        return None 
